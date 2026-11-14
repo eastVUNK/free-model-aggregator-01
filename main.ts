@@ -18,7 +18,9 @@
 //   6. Routing is rating-ordered over the brief's quality table (the sealed truth),
 //      adapted by observed answers: on 402/429 fail over to the next candidate, revisit
 //      the failed provider for a later request (a scheduled fail is transient, budget
-//      exhaustion and outage are permanent). No wall clock, no unseeded randomness:
+//      exhaustion and outage are permanent); a provider that failed twice in a row is
+//      demoted to the end of the candidate list until a success revives it (dead).
+//      No wall clock, no unseeded randomness:
 //      every decision is a function of the brief and the providers' answers so far,
 //      so a replay leaves the same state export.
 //
@@ -958,8 +960,20 @@ function candidatesFor(
     if (s === undefined || s.consecFails === 0) return 0;
     return s.consecFails === 1 ? 1 : 2;
   };
+  // A provider that failed twice in a row is treated as dead: budget spent or
+  // outage (after two consecutive failures the next call is far more likely to
+  // fail than to succeed; a pair of adjacent scheduled fails is the rare
+  // exception). It drops to the end of the list, whatever its rating, but is
+  // still tried before the request is given up, and a later success revives it.
+  const dead = (c: Candidate): number => {
+    const s = stats.get(c.provider.id);
+    return s !== undefined && s.consecFails >= 2 ? 1 : 0;
+  };
   const callsOf = (c: Candidate): number => stats.get(c.provider.id)?.calls ?? 0;
   out.sort((a, b) => {
+    const da = dead(a);
+    const db = dead(b);
+    if (da !== db) return da - db;
     if (b.rating !== a.rating) return b.rating - a.rating;
     const sa = stateClass(a);
     const sb = stateClass(b);
